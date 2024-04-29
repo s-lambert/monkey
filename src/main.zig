@@ -27,6 +27,7 @@ const Token = union(enum) {
     pub fn keyword(ident: []const u8) ?Token {
         const map = std.ComptimeStringMap(Token, .{
             .{ "let", .let },
+            .{ "fn", .function },
         });
         return map.get(ident);
     }
@@ -56,7 +57,12 @@ const Lexer = struct {
             0 => .eof,
             '+' => .plus,
             '=' => .assign,
+            ',' => .comma,
             ';' => .semicolon,
+            '(' => .l_paren,
+            ')' => .r_paren,
+            '{' => .l_brace,
+            '}' => .r_brace,
             'a'...'z', 'A'...'Z' => {
                 const ident = self.read_identifier();
                 if (Token.keyword(ident)) |token| {
@@ -114,7 +120,7 @@ const Lexer = struct {
 };
 
 test "parse variable assignment" {
-    const first_program =
+    const variable_assignment =
         \\let x = 5 + 5;
     ;
     const expected_tokens = [_]Token{
@@ -126,7 +132,65 @@ test "parse variable assignment" {
         .{ .int = "5" },
         .semicolon,
     };
-    var lex = Lexer.init(first_program);
+    var lex = Lexer.init(variable_assignment);
+
+    for (expected_tokens) |token| {
+        const tok = lex.next_token();
+
+        try std.testing.expectEqualDeep(token, tok);
+    }
+}
+
+test "parse functions and calls" {
+    const function_calls =
+        \\let five = 5;
+        \\let ten = 10;
+        \\let add = fn(x, y) {
+        \\  x + y;
+        \\};
+        \\let result = add(five, ten);
+    ;
+
+    const expected_tokens = [_]Token{
+        .let,
+        .{ .ident = "five" },
+        .assign,
+        .{ .int = "5" },
+        .semicolon,
+        .let,
+        .{ .ident = "ten" },
+        .assign,
+        .{ .int = "10" },
+        .semicolon,
+        .let,
+        .{ .ident = "add" },
+        .assign,
+        .function,
+        .l_paren,
+        .{ .ident = "x" },
+        .comma,
+        .{ .ident = "y" },
+        .r_paren,
+        .l_brace,
+        .{ .ident = "x" },
+        .plus,
+        .{ .ident = "y" },
+        .semicolon,
+        .r_brace,
+        .semicolon,
+        .let,
+        .{ .ident = "result" },
+        .assign,
+        .{ .ident = "add" },
+        .l_paren,
+        .{ .ident = "five" },
+        .comma,
+        .{ .ident = "ten" },
+        .r_paren,
+        .semicolon,
+    };
+
+    var lex = Lexer.init(function_calls);
 
     for (expected_tokens) |token| {
         const tok = lex.next_token();
