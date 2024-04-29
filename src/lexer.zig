@@ -45,7 +45,7 @@ const Token = union(enum) {
     }
 };
 
-const Lexer = struct {
+pub const Lexer = struct {
     const Self = @This();
 
     read_position: usize = 0,
@@ -106,6 +106,10 @@ const Lexer = struct {
 
         self.move_next();
         return token;
+    }
+
+    pub fn has_tokens(self: *Self) bool {
+        return self.position < self.input.len;
     }
 
     fn skip_whitespace(self: *Self) void {

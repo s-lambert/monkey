@@ -1,3 +1,5 @@
-const std = @import("std");
+const repl = @import("./repl.zig");
 
-pub fn main() !void {}
+pub fn main() !void {
+    return repl.run_repl();
+}
