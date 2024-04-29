@@ -1,24 +1,136 @@
 const std = @import("std");
 
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+pub fn main() !void {}
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+const Token = union(enum) {
+    eof,
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    ident: []const u8,
+    int: []const u8,
 
-    try bw.flush(); // don't forget to flush!
-}
+    assign,
+    plus,
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+    comma,
+    semicolon,
+
+    l_paren,
+    r_paren,
+    l_brace,
+    r_brace,
+
+    function,
+    let,
+
+    illegal,
+
+    pub fn keyword(ident: []const u8) ?Token {
+        const map = std.ComptimeStringMap(Token, .{
+            .{ "let", .let },
+        });
+        return map.get(ident);
+    }
+};
+
+const Lexer = struct {
+    const Self = @This();
+
+    read_position: usize = 0,
+    position: usize = 0,
+    ch: u8 = 0,
+    input: []const u8,
+
+    pub fn init(input: []const u8) Self {
+        var self = Self{
+            .input = input,
+        };
+
+        self.move_next();
+
+        return self;
+    }
+
+    pub fn next_token(self: *Self) Token {
+        self.skip_whitespace();
+        const token: Token = switch (self.ch) {
+            0 => .eof,
+            '+' => .plus,
+            '=' => .assign,
+            ';' => .semicolon,
+            'a'...'z', 'A'...'Z' => {
+                const ident = self.read_identifier();
+                if (Token.keyword(ident)) |token| {
+                    return token;
+                }
+                return .{ .ident = ident };
+            },
+            '0'...'9' => {
+                const int = self.read_int();
+                return .{ .int = int };
+            },
+            else => .illegal,
+        };
+
+        self.move_next();
+        return token;
+    }
+
+    fn skip_whitespace(self: *Self) void {
+        while (std.ascii.isWhitespace(self.ch)) {
+            self.move_next();
+        }
+    }
+
+    fn move_next(self: *Self) void {
+        if (self.read_position >= self.input.len) {
+            self.ch = 0;
+        } else {
+            self.ch = self.input[self.read_position];
+        }
+
+        self.position = self.read_position;
+        self.read_position += 1;
+    }
+
+    fn read_identifier(self: *Self) []const u8 {
+        const position = self.position;
+
+        while (std.ascii.isAlphabetic(self.ch)) {
+            self.move_next();
+        }
+
+        return self.input[position..self.position];
+    }
+
+    fn read_int(self: *Self) []const u8 {
+        const position = self.position;
+
+        while (std.ascii.isDigit(self.ch)) {
+            self.move_next();
+        }
+
+        return self.input[position..self.position];
+    }
+};
+
+test "parse variable assignment" {
+    const first_program =
+        \\let x = 5 + 5;
+    ;
+    const expected_tokens = [_]Token{
+        .let,
+        .{ .ident = "x" },
+        .assign,
+        .{ .int = "5" },
+        .plus,
+        .{ .int = "5" },
+        .semicolon,
+    };
+    var lex = Lexer.init(first_program);
+
+    for (expected_tokens) |token| {
+        const tok = lex.next_token();
+
+        try std.testing.expectEqualDeep(token, tok);
+    }
 }
