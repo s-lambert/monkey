@@ -3,26 +3,28 @@ const std = @import("std");
 pub fn main() !void {}
 
 const Token = union(enum) {
+    illegal,
     eof,
 
+    // Literals
     ident: []const u8,
     int: []const u8,
 
+    // Operators
     assign,
     plus,
 
+    // Delimiters
     comma,
     semicolon,
-
     l_paren,
     r_paren,
     l_brace,
     r_brace,
 
+    // Keywords
     function,
     let,
-
-    illegal,
 
     pub fn keyword(ident: []const u8) ?Token {
         const map = std.ComptimeStringMap(Token, .{
