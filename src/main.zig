@@ -12,6 +12,9 @@ const Token = union(enum) {
 
     // Operators
     assign,
+    bang,
+    not_equal,
+    equal,
     plus,
 
     // Delimiters
@@ -58,14 +61,29 @@ const Lexer = struct {
         const token: Token = switch (self.ch) {
             0 => .eof,
             '+' => .plus,
-            '=' => .assign,
+            '!' => blk: {
+                if (self.peek_char() == '=') {
+                    self.move_next();
+                    break :blk .not_equal;
+                } else {
+                    break :blk .bang;
+                }
+            },
+            '=' => blk: {
+                if (self.peek_char() == '=') {
+                    self.move_next();
+                    break :blk .equal;
+                } else {
+                    break :blk .assign;
+                }
+            },
             ',' => .comma,
             ';' => .semicolon,
             '(' => .l_paren,
             ')' => .r_paren,
             '{' => .l_brace,
             '}' => .r_brace,
-            'a'...'z', 'A'...'Z' => {
+            'a'...'z', 'A'...'Z', '_' => {
                 const ident = self.read_identifier();
                 if (Token.keyword(ident)) |token| {
                     return token;
@@ -86,6 +104,14 @@ const Lexer = struct {
     fn skip_whitespace(self: *Self) void {
         while (std.ascii.isWhitespace(self.ch)) {
             self.move_next();
+        }
+    }
+
+    fn peek_char(self: *Self) u8 {
+        if (self.read_position >= self.input.len) {
+            return 0;
+        } else {
+            return self.input[self.read_position];
         }
     }
 
@@ -193,6 +219,32 @@ test "parse functions and calls" {
     };
 
     var lex = Lexer.init(function_calls);
+
+    for (expected_tokens) |token| {
+        const tok = lex.next_token();
+
+        try std.testing.expectEqualDeep(token, tok);
+    }
+}
+
+test "parse two-letter comparators" {
+    const comparators =
+        \\5 != 10;
+        \\5 == 5;
+    ;
+
+    const expected_tokens = [_]Token{
+        .{ .int = "5" },
+        .not_equal,
+        .{ .int = "10" },
+        .semicolon,
+        .{ .int = "5" },
+        .equal,
+        .{ .int = "5" },
+        .semicolon,
+    };
+
+    var lex = Lexer.init(comparators);
 
     for (expected_tokens) |token| {
         const tok = lex.next_token();
