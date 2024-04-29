@@ -16,6 +16,13 @@ const Token = union(enum) {
     not_equal,
     equal,
     plus,
+    minus,
+    divide,
+    multiply,
+    lt,
+    lte,
+    gt,
+    gte,
 
     // Delimiters
     comma,
@@ -56,27 +63,27 @@ const Lexer = struct {
         return self;
     }
 
+    fn opt_next(self: *Self, ch: u8, t: Token, f: Token) Token {
+        if (self.peek_char() == ch) {
+            self.move_next();
+            return t;
+        } else {
+            return f;
+        }
+    }
+
     pub fn next_token(self: *Self) Token {
         self.skip_whitespace();
         const token: Token = switch (self.ch) {
             0 => .eof,
             '+' => .plus,
-            '!' => blk: {
-                if (self.peek_char() == '=') {
-                    self.move_next();
-                    break :blk .not_equal;
-                } else {
-                    break :blk .bang;
-                }
-            },
-            '=' => blk: {
-                if (self.peek_char() == '=') {
-                    self.move_next();
-                    break :blk .equal;
-                } else {
-                    break :blk .assign;
-                }
-            },
+            '-' => .minus,
+            '/' => .divide,
+            '*' => .multiply,
+            '!' => self.opt_next('=', .not_equal, .bang),
+            '=' => self.opt_next('=', .equal, .assign),
+            '>' => self.opt_next('=', .gte, .gt),
+            '<' => self.opt_next('=', .lte, .lt),
             ',' => .comma,
             ';' => .semicolon,
             '(' => .l_paren,
@@ -231,6 +238,8 @@ test "parse two-letter comparators" {
     const comparators =
         \\5 != 10;
         \\5 == 5;
+        \\10 > 5;
+        \\5 <= 10;
     ;
 
     const expected_tokens = [_]Token{
@@ -241,6 +250,14 @@ test "parse two-letter comparators" {
         .{ .int = "5" },
         .equal,
         .{ .int = "5" },
+        .semicolon,
+        .{ .int = "10" },
+        .gt,
+        .{ .int = "5" },
+        .semicolon,
+        .{ .int = "5" },
+        .lte,
+        .{ .int = "10" },
         .semicolon,
     };
 
