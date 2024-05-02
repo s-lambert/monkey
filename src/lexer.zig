@@ -1,8 +1,6 @@
 const std = @import("std");
 
-pub fn main() !void {}
-
-const Token = union(enum) {
+pub const Token = union(enum) {
     illegal,
     eof,
 
@@ -158,7 +156,7 @@ pub const Lexer = struct {
     }
 };
 
-test "parse variable assignment" {
+test "lex variable assignment" {
     const variable_assignment =
         \\let x = 5 + 5;
     ;
@@ -180,7 +178,7 @@ test "parse variable assignment" {
     }
 }
 
-test "parse functions and calls" {
+test "lex functions and calls" {
     const function_calls =
         \\let five = 5;
         \\let ten = 10;
@@ -238,7 +236,7 @@ test "parse functions and calls" {
     }
 }
 
-test "parse two-letter comparators" {
+test "lex two-letter comparators" {
     const comparators =
         \\5 != 10;
         \\5 == 5;
