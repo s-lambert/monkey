@@ -33,11 +33,13 @@ pub const Token = union(enum) {
     // Keywords
     function,
     let,
+    ret,
 
     pub fn keyword(ident: []const u8) ?Token {
         const map = std.ComptimeStringMap(Token, .{
-            .{ "let", .let },
             .{ "fn", .function },
+            .{ "let", .let },
+            .{ "return", .ret },
         });
         return map.get(ident);
     }
@@ -183,7 +185,7 @@ test "lex functions and calls" {
         \\let five = 5;
         \\let ten = 10;
         \\let add = fn(x, y) {
-        \\  x + y;
+        \\  return x + y;
         \\};
         \\let result = add(five, ten);
     ;
@@ -209,6 +211,7 @@ test "lex functions and calls" {
         .{ .ident = "y" },
         .r_paren,
         .l_brace,
+        .ret,
         .{ .ident = "x" },
         .plus,
         .{ .ident = "y" },
