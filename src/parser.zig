@@ -16,6 +16,9 @@ const Statement = union(enum) {
         identifier: Identifier,
         value: Expression,
     },
+    ret: struct {
+        value: ?Expression,
+    },
     empty,
 };
 
@@ -90,6 +93,7 @@ const Parser = struct {
     fn parse_statement(self: *Self) !?Statement {
         return switch (self.curr_token) {
             .let => try self.parse_let(),
+            .ret => try self.parse_return(),
             else => null,
         };
     }
@@ -121,7 +125,22 @@ const Parser = struct {
                 .value = e,
             } };
         }
+
         return null;
+    }
+
+    fn parse_return(self: *Self) !?Statement {
+        self.next_token();
+
+        while (self.peek_token != .semicolon or self.peek_token == .eof) {
+            self.next_token();
+        }
+
+        var expression = self.parse_expression();
+
+        return .{ .ret = .{
+            .value = expression,
+        } };
     }
 
     fn parse_expression(self: *Self) ?Expression {
@@ -160,4 +179,18 @@ test "parse no assign in let statement" {
     var program = try parser.parse_program();
     defer program.deinit();
     try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
+}
+
+test "parse return statement" {
+    var src =
+        \\return 10;
+    ;
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqualDeep(
+        Expression{ .integer = "10" },
+        program.statements.items[0].ret.value.?,
+    );
 }
