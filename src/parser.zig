@@ -20,6 +20,7 @@ const Statement = union(enum) {
 };
 
 const StatementList = std.ArrayList(Statement);
+const ParseErrors = std.ArrayList([]const u8);
 
 const Program = struct {
     allocator: std.mem.Allocator,
@@ -44,6 +45,7 @@ const Parser = struct {
     lex: lexer.Lexer,
     curr_token: lexer.Token,
     peek_token: lexer.Token,
+    errors: ParseErrors,
 
     const Self = @This();
 
@@ -53,6 +55,7 @@ const Parser = struct {
             .lex = lexer.Lexer.init(program_text),
             .curr_token = .eof,
             .peek_token = .eof,
+            .errors = ParseErrors.init(allocator),
         };
 
         // Populate curr/peek
@@ -60,6 +63,10 @@ const Parser = struct {
         p.next_token();
 
         return p;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.errors.deinit();
     }
 
     pub fn next_token(self: *Self) void {
@@ -70,8 +77,8 @@ const Parser = struct {
     pub fn parse_program(self: *Self) !Program {
         var p = Program.init(self.allocator);
 
-        while (self.curr_token != lexer.Token.eof) {
-            if (self.parse_statement()) |statement| {
+        while (self.curr_token != .eof) {
+            if (try self.parse_statement()) |statement| {
                 try p.statements.append(statement);
             }
             self.next_token();
@@ -80,14 +87,14 @@ const Parser = struct {
         return p;
     }
 
-    fn parse_statement(self: *Self) ?Statement {
+    fn parse_statement(self: *Self) !?Statement {
         return switch (self.curr_token) {
-            .let => self.parse_let(),
+            .let => try self.parse_let(),
             else => null,
         };
     }
 
-    fn parse_let(self: *Self) ?Statement {
+    fn parse_let(self: *Self) !?Statement {
         self.next_token();
 
         var ident: Identifier = .{
@@ -98,15 +105,14 @@ const Parser = struct {
         self.next_token();
 
         if (self.curr_token != .assign) {
-            return null;
+            try self.errors.append("let missing assignment");
         }
 
-        self.next_token();
+        while (self.peek_token != .semicolon or self.peek_token == .eof) {
+            self.next_token();
+        }
 
-        var expression: ?Expression = switch (self.curr_token) {
-            .int => |value| .{ .integer = value },
-            else => null,
-        };
+        var expression = self.parse_expression();
 
         if (expression) |e| {
             return .{ .let = .{
@@ -117,6 +123,13 @@ const Parser = struct {
         }
         return null;
     }
+
+    fn parse_expression(self: *Self) ?Expression {
+        return switch (self.curr_token) {
+            .int => |value| .{ .integer = value },
+            else => null,
+        };
+    }
 };
 
 test "parse a let statement" {
@@ -124,6 +137,7 @@ test "parse a let statement" {
         \\let x = 5;
     ;
     var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
@@ -135,4 +149,15 @@ test "parse a let statement" {
         Expression{ .integer = "5" },
         program.statements.items[0].let.value,
     );
+}
+
+test "parse no assign in let statement" {
+    var src =
+        \\let x 5;
+    ;
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
 }
