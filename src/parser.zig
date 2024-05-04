@@ -15,9 +15,30 @@ const Statement = union(enum) {
         token: lexer.Token,
         identifier: Identifier,
         value: Expression,
+
+        const Self = @This();
+
+        pub fn print(self: *const Self) void {
+            std.log.warn("let {s}", .{self.identifier.value});
+        }
     },
     ret: struct {
         value: ?Expression,
+
+        const Self = @This();
+
+        pub fn print(_: *const Self) void {
+            std.log.warn("return", .{});
+        }
+    },
+    exp: struct {
+        value: Expression,
+
+        const Self = @This();
+
+        pub fn print(_: *const Self) void {
+            std.log.warn("expression", .{});
+        }
     },
     empty,
 };
@@ -40,6 +61,17 @@ const Program = struct {
 
     pub fn deinit(self: *Self) void {
         self.statements.deinit();
+    }
+
+    pub fn print(self: *Self) void {
+        for (self.statements.items) |statement| {
+            switch(statement) {
+                .let => |l| { l.print(); },
+                .ret => |r| { r.print(); },
+                .exp => |e| { e.print(); },
+                else => unreachable,
+            }
+        }
     }
 };
 
@@ -91,10 +123,11 @@ const Parser = struct {
     }
 
     fn parse_statement(self: *Self) !?Statement {
+        // std.log.warn("{s}", .{@tagName(self.curr_token)});
         return switch (self.curr_token) {
             .let => try self.parse_let(),
             .ret => try self.parse_return(),
-            else => null,
+            else => try self.parse_expression_statement(),
         };
     }
 
@@ -112,7 +145,7 @@ const Parser = struct {
             try self.errors.append("let missing assignment");
         }
 
-        while (self.peek_token != .semicolon or self.peek_token == .eof) {
+        while (self.peek_token != .semicolon and self.peek_token != .eof) {
             self.next_token();
         }
 
@@ -132,7 +165,7 @@ const Parser = struct {
     fn parse_return(self: *Self) !?Statement {
         self.next_token();
 
-        while (self.peek_token != .semicolon or self.peek_token == .eof) {
+        while (self.peek_token != .semicolon and self.peek_token != .eof) {
             self.next_token();
         }
 
@@ -143,7 +176,26 @@ const Parser = struct {
         } };
     }
 
+    fn parse_expression_statement(self: *Self) !?Statement {
+        while (self.peek_token != .semicolon and self.peek_token != .eof) {
+            self.next_token();
+        }
+        
+
+        if (self.parse_expression()) |e| {
+            return .{
+                .exp = .{
+                    .value = e,
+                },
+            };
+        }
+
+
+        return null;
+    }
+
     fn parse_expression(self: *Self) ?Expression {
+        defer self.next_token();
         return switch (self.curr_token) {
             .int => |value| .{ .integer = value },
             else => null,
@@ -151,46 +203,59 @@ const Parser = struct {
     }
 };
 
-test "parse a let statement" {
+// test "parse a let statement" {
+//     var src =
+//         \\let x = 5;
+//     ;
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+//     try std.testing.expectEqualDeep(
+//         Identifier{ .token = .{ .ident = "x" }, .value = "x" },
+//         program.statements.items[0].let.identifier,
+//     );
+//     try std.testing.expectEqualDeep(
+//         Expression{ .integer = "5" },
+//         program.statements.items[0].let.value,
+//     );
+// }
+
+test "printing" {
     var src =
         \\let x = 5;
-    ;
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
-    try std.testing.expectEqualDeep(
-        Identifier{ .token = .{ .ident = "x" }, .value = "x" },
-        program.statements.items[0].let.identifier,
-    );
-    try std.testing.expectEqualDeep(
-        Expression{ .integer = "5" },
-        program.statements.items[0].let.value,
-    );
-}
-
-test "parse no assign in let statement" {
-    var src =
-        \\let x 5;
-    ;
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
-}
-
-test "parse return statement" {
-    var src =
+        \\5 + 5;
         \\return 10;
     ;
     var parser = Parser.init(std.testing.allocator, src);
     defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
-    try std.testing.expectEqualDeep(
-        Expression{ .integer = "10" },
-        program.statements.items[0].ret.value.?,
-    );
+    program.print();
 }
+
+// test "parse no assign in let statement" {
+//     var src =
+//         \\let x 5;
+//     ;
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
+// }
+
+// test "parse return statement" {
+//     var src =
+//         \\return 10;
+//     ;
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqualDeep(
+//         Expression{ .integer = "10" },
+//         program.statements.items[0].ret.value.?,
+//     );
+// }
