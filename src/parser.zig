@@ -1,8 +1,26 @@
+// curl -O "$(curl https://ziglang.org/download/index.json | jaq -r '.master."x86_64-linux".tarball')"
+
 const std = @import("std");
 const lexer = @import("./lexer.zig");
 
+const Precedence = enum(u8) {
+    lowest = 0,
+    equals = 1,
+    lessgreater = 2,
+    sum = 3,
+    product = 4,
+    prefix = 5,
+    call = 6,
+};
+
 const Expression = union(enum) {
-    integer: []const u8,
+    integer: struct { value: u8, string: []const u8 },
+    identifier: []const u8,
+    operator: struct {
+        // - or !
+        token: lexer.Token,
+        rhs: Expression,
+    },
 };
 
 const Identifier = struct {
@@ -40,7 +58,6 @@ const Statement = union(enum) {
             std.log.warn("expression", .{});
         }
     },
-    empty,
 };
 
 const StatementList = std.ArrayList(Statement);
@@ -65,11 +82,8 @@ const Program = struct {
 
     pub fn print(self: *Self) void {
         for (self.statements.items) |statement| {
-            switch(statement) {
-                .let => |l| { l.print(); },
-                .ret => |r| { r.print(); },
-                .exp => |e| { e.print(); },
-                else => unreachable,
+            switch (statement) {
+                inline else => |case| case.print(),
             }
         }
     }
@@ -123,7 +137,6 @@ const Parser = struct {
     }
 
     fn parse_statement(self: *Self) !?Statement {
-        // std.log.warn("{s}", .{@tagName(self.curr_token)});
         return switch (self.curr_token) {
             .let => try self.parse_let(),
             .ret => try self.parse_return(),
@@ -149,7 +162,7 @@ const Parser = struct {
             self.next_token();
         }
 
-        var expression = self.parse_expression();
+        var expression = self.parse_expression(.lowest);
 
         if (expression) |e| {
             return .{ .let = .{
@@ -169,7 +182,7 @@ const Parser = struct {
             self.next_token();
         }
 
-        var expression = self.parse_expression();
+        var expression = self.parse_expression(.lowest);
 
         return .{ .ret = .{
             .value = expression,
@@ -177,12 +190,7 @@ const Parser = struct {
     }
 
     fn parse_expression_statement(self: *Self) !?Statement {
-        while (self.peek_token != .semicolon and self.peek_token != .eof) {
-            self.next_token();
-        }
-        
-
-        if (self.parse_expression()) |e| {
+        if (self.parse_expression(.lowest)) |e| {
             return .{
                 .exp = .{
                     .value = e,
@@ -190,72 +198,112 @@ const Parser = struct {
             };
         }
 
+        if (self.peek_token == .semicolon or self.peek_token == .eof) {
+            self.next_token();
+        }
 
         return null;
     }
 
-    fn parse_expression(self: *Self) ?Expression {
-        defer self.next_token();
+    fn parse_expression(self: *Self, _: Precedence) ?Expression {
+        if (self.parse_prefix()) |e| {
+            return e;
+        } else {
+            return null;
+        }
+    }
+
+    fn skip_semicolon(self: *Self) void {
+        if (self.peek_token == .semicolon) {
+            self.next_token();
+        }
+    }
+
+    fn parse_prefix(self: *Self) ?Expression {
         return switch (self.curr_token) {
-            .int => |value| .{ .integer = value },
+            .ident => |ident| .{ .identifier = ident },
+            .int => |int| .{ .integer = .{
+                .value = 0,
+                .string = int,
+            } },
             else => null,
         };
     }
+
+    fn parse_infix(self: *Self, rhs: Expression) void {
+        _ = self;
+        _ = rhs;
+    }
 };
 
-// test "parse a let statement" {
-//     var src =
-//         \\let x = 5;
-//     ;
-//     var parser = Parser.init(std.testing.allocator, src);
-//     defer parser.deinit();
-//     var program = try parser.parse_program();
-//     defer program.deinit();
-//     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
-//     try std.testing.expectEqualDeep(
-//         Identifier{ .token = .{ .ident = "x" }, .value = "x" },
-//         program.statements.items[0].let.identifier,
-//     );
-//     try std.testing.expectEqualDeep(
-//         Expression{ .integer = "5" },
-//         program.statements.items[0].let.value,
-//     );
-// }
-
-test "printing" {
+test "parse a let statement" {
     var src =
         \\let x = 5;
-        \\5 + 5;
+    ;
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+    try std.testing.expectEqualDeep(
+        Identifier{ .token = .{ .ident = "x" }, .value = "x" },
+        program.statements.items[0].let.identifier,
+    );
+    try std.testing.expectEqualDeep(
+        Expression{ .integer = .{ .value = 0, .string = "5" } },
+        program.statements.items[0].let.value,
+    );
+    try std.testing.expectEqual(parser.errors.items.len, 0);
+}
+
+test "parse no assign in let statement" {
+    var src =
+        \\let x 5;
+    ;
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
+}
+
+test "parse return statement" {
+    var src =
         \\return 10;
     ;
     var parser = Parser.init(std.testing.allocator, src);
     defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
-    program.print();
+    try std.testing.expectEqualDeep(
+        Expression{ .integer = .{ .value = 0, .string = "10" } },
+        program.statements.items[0].ret.value.?,
+    );
+    try std.testing.expectEqual(parser.errors.items.len, 0);
 }
 
-// test "parse no assign in let statement" {
-//     var src =
-//         \\let x 5;
-//     ;
-//     var parser = Parser.init(std.testing.allocator, src);
-//     defer parser.deinit();
-//     var program = try parser.parse_program();
-//     defer program.deinit();
-//     try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
-// }
+test "parse a singular integer expression statement" {
+    const src = "5;";
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqualDeep(
+        Expression{ .integer = .{ .value = 0, .string = "5" } },
+        program.statements.items[0].exp.value,
+    );
+    try std.testing.expectEqual(parser.errors.items.len, 0);
+}
 
-// test "parse return statement" {
-//     var src =
-//         \\return 10;
-//     ;
-//     var parser = Parser.init(std.testing.allocator, src);
-//     defer parser.deinit();
-//     var program = try parser.parse_program();
-//     defer program.deinit();
-//     try std.testing.expectEqualDeep(
-//         Expression{ .integer = "10" },
-//         program.statements.items[0].ret.value.?,
-//     );
-// }
+test "parse a singular identifier expression statement" {
+    const src = "foo;";
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqualDeep(
+        Expression{ .identifier = "foo" },
+        program.statements.items[0].exp.value,
+    );
+    try std.testing.expectEqual(parser.errors.items.len, 0);
+}
