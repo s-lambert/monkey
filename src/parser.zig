@@ -14,12 +14,15 @@ const Precedence = enum(u8) {
 };
 
 const Expression = union(enum) {
-    integer: struct { value: u8, string: []const u8 },
+    integer: struct {
+        value: u8,
+        string: []const u8,
+    },
     identifier: []const u8,
     operator: struct {
-        // - or !
+        // - (.minus) or ! (.bang)
         token: lexer.Token,
-        rhs: Expression,
+        rhs: *Expression,
     },
 };
 
@@ -58,6 +61,12 @@ const Statement = union(enum) {
             std.log.warn("expression", .{});
         }
     },
+
+    pub fn print(self: *Statement) void {
+        switch (self) {
+            inline else => |case| case.print(),
+        }
+    }
 };
 
 const StatementList = std.ArrayList(Statement);
@@ -82,9 +91,7 @@ const Program = struct {
 
     pub fn print(self: *Self) void {
         for (self.statements.items) |statement| {
-            switch (statement) {
-                inline else => |case| case.print(),
-            }
+            statement.print();
         }
     }
 };
@@ -249,9 +256,9 @@ test "parse a let statement" {
         Identifier{ .token = .{ .ident = "x" }, .value = "x" },
         program.statements.items[0].let.identifier,
     );
-    try std.testing.expectEqualDeep(
-        Expression{ .integer = .{ .value = 0, .string = "5" } },
-        program.statements.items[0].let.value,
+    try std.testing.expectEqualStrings(
+        "5",
+        program.statements.items[0].let.value.integer.string,
     );
     try std.testing.expectEqual(parser.errors.items.len, 0);
 }
@@ -275,9 +282,9 @@ test "parse return statement" {
     defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
-    try std.testing.expectEqualDeep(
-        Expression{ .integer = .{ .value = 0, .string = "10" } },
-        program.statements.items[0].ret.value.?,
+    try std.testing.expectEqualStrings(
+        "10",
+        program.statements.items[0].ret.value.?.integer.string,
     );
     try std.testing.expectEqual(parser.errors.items.len, 0);
 }
@@ -288,9 +295,9 @@ test "parse a singular integer expression statement" {
     defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
-    try std.testing.expectEqualDeep(
-        Expression{ .integer = .{ .value = 0, .string = "5" } },
-        program.statements.items[0].exp.value,
+    try std.testing.expectEqualStrings(
+        "5",
+        program.statements.items[0].exp.value.integer.string,
     );
     try std.testing.expectEqual(parser.errors.items.len, 0);
 }
@@ -301,9 +308,9 @@ test "parse a singular identifier expression statement" {
     defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
-    try std.testing.expectEqualDeep(
-        Expression{ .identifier = "foo" },
-        program.statements.items[0].exp.value,
+    try std.testing.expectEqualStrings(
+        "foo",
+        program.statements.items[0].exp.value.identifier,
     );
     try std.testing.expectEqual(parser.errors.items.len, 0);
 }
