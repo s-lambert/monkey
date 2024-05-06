@@ -71,6 +71,7 @@ const Statement = union(enum) {
 
 const StatementList = std.ArrayList(Statement);
 const ParseErrors = std.ArrayList([]const u8);
+const Expressions = std.ArrayList(*Expression);
 
 const Program = struct {
     allocator: std.mem.Allocator,
@@ -102,6 +103,7 @@ const Parser = struct {
     curr_token: lexer.Token,
     peek_token: lexer.Token,
     errors: ParseErrors,
+    exprs: Expressions,
 
     const Self = @This();
 
@@ -112,6 +114,7 @@ const Parser = struct {
             .curr_token = .eof,
             .peek_token = .eof,
             .errors = ParseErrors.init(allocator),
+            .exprs = Expressions.init(allocator),
         };
 
         // Populate curr/peek
@@ -123,6 +126,12 @@ const Parser = struct {
 
     pub fn deinit(self: *Self) void {
         self.errors.deinit();
+        var i = self.exprs.items.len;
+        while (i > 0) {
+            i -= 1;
+            self.allocator.destroy(self.exprs.items[i]);
+        }
+        self.exprs.deinit();
     }
 
     pub fn next_token(self: *Self) void {
@@ -230,6 +239,13 @@ const Parser = struct {
                 self.next_token();
 
                 var rhs = self.parse_expression(.lowest).?;
+                const rhs_heap = self.allocator.create(Expression) catch {
+                    return null;
+                };
+                rhs_heap.* = rhs;
+                self.exprs.append(rhs_heap) catch {
+                    return null;
+                };
 
                 return .{ .operator = .{
                     .token = .bang,
@@ -240,10 +256,17 @@ const Parser = struct {
                 self.next_token();
 
                 var rhs = self.parse_expression(.lowest).?;
+                const rhs_heap = self.allocator.create(Expression) catch {
+                    return null;
+                };
+                rhs_heap.* = rhs;
+                self.exprs.append(rhs_heap) catch {
+                    return null;
+                };
 
                 return .{ .operator = .{
                     .token = .minus,
-                    .rhs = &rhs,
+                    .rhs = rhs_heap,
                 } };
             },
             else => null,
