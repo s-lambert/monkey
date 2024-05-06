@@ -22,7 +22,7 @@ const Expression = union(enum) {
     operator: struct {
         // - (.minus) or ! (.bang)
         token: lexer.Token,
-        rhs: *Expression,
+        rhs: ?*Expression,
     },
 };
 
@@ -198,13 +198,12 @@ const Parser = struct {
 
     fn parse_expression_statement(self: *Self) !?Statement {
         if (self.parse_expression(.lowest)) |e| {
-            return .{
-                .exp = .{
-                    .value = e,
-                },
-            };
+            return .{ .exp = .{
+                .value = e,
+            } };
         }
 
+        std.debug.assert(self.peek_token == .semicolon or self.peek_token == .eof);
         if (self.peek_token == .semicolon or self.peek_token == .eof) {
             self.next_token();
         }
@@ -220,12 +219,6 @@ const Parser = struct {
         }
     }
 
-    fn skip_semicolon(self: *Self) void {
-        if (self.peek_token == .semicolon) {
-            self.next_token();
-        }
-    }
-
     fn parse_prefix(self: *Self) ?Expression {
         return switch (self.curr_token) {
             .ident => |ident| .{ .identifier = ident },
@@ -233,6 +226,26 @@ const Parser = struct {
                 .value = 0,
                 .string = int,
             } },
+            .bang => {
+                self.next_token();
+
+                var rhs = self.parse_expression(.lowest).?;
+
+                return .{ .operator = .{
+                    .token = .bang,
+                    .rhs = &rhs,
+                } };
+            },
+            .minus => {
+                self.next_token();
+
+                var rhs = self.parse_expression(.lowest).?;
+
+                return .{ .operator = .{
+                    .token = .minus,
+                    .rhs = &rhs,
+                } };
+            },
             else => null,
         };
     }
@@ -311,6 +324,36 @@ test "parse a singular identifier expression statement" {
     try std.testing.expectEqualStrings(
         "foo",
         program.statements.items[0].exp.value.identifier,
+    );
+    try std.testing.expectEqual(parser.errors.items.len, 0);
+}
+
+test "parse a prefix not operator" {
+    const src = "!foo;";
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqual(
+        program.statements.items[0].exp.value.operator.token,
+        .bang,
+    );
+    try std.testing.expectEqual(parser.errors.items.len, 0);
+}
+
+test "parse a prefix negate operator" {
+    const src = "-55;";
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqual(
+        program.statements.items[0].exp.value.operator.token,
+        .minus,
+    );
+    try std.testing.expectEqualStrings(
+        "55",
+        program.statements.items[0].exp.value.operator.rhs.?.integer.string,
     );
     try std.testing.expectEqual(parser.errors.items.len, 0);
 }
