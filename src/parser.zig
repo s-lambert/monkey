@@ -5,13 +5,34 @@ const lexer = @import("./lexer.zig");
 
 const Precedence = enum(u8) {
     lowest = 0,
-    equals = 1,
-    lessgreater = 2,
-    sum = 3,
-    product = 4,
-    prefix = 5,
+    equals = 1, // ==, !=
+    lessgreater = 2, // <, >, <=, >=
+    sum = 3, // +, -
+    product = 4, // *, /
+    prefix = 5, // !_, -_
     call = 6,
 };
+
+fn token_precedence(t: lexer.Token) Precedence {
+    return switch (t) {
+        lexer.Token.equal => .equals,
+        lexer.Token.not_equal => .equals,
+        lexer.Token.gt => .lessgreater,
+        lexer.Token.gte => .lessgreater,
+        lexer.Token.lt => .lessgreater,
+        lexer.Token.lte => .lessgreater,
+        lexer.Token.plus => .sum,
+        lexer.Token.minus => .sum,
+        lexer.Token.multiply => .product,
+        lexer.Token.divide => .product,
+        lexer.Token.bang => .prefix,
+        else => .lowest,
+    };
+}
+
+test "precedence calculation" {
+    try std.testing.expectEqual(token_precedence(lexer.Token.equal), Precedence.equals);
+}
 
 const Expression = union(enum) {
     integer: struct {
@@ -19,9 +40,14 @@ const Expression = union(enum) {
         string: []const u8,
     },
     identifier: []const u8,
-    operator: struct {
+    prefix: struct {
         // - (.minus) or ! (.bang)
         token: lexer.Token,
+        rhs: ?*Expression,
+    },
+    infix: struct {
+        op: lexer.Token,
+        lhs: ?*Expression,
         rhs: ?*Expression,
     },
 };
@@ -57,12 +83,12 @@ const Statement = union(enum) {
 
         const Self = @This();
 
-        pub fn print(_: *const Self) void {
-            std.log.warn("expression", .{});
+        pub fn print(self: *const Self) void {
+            std.log.warn("expression {s}", .{@tagName(self.value)});
         }
     },
 
-    pub fn print(self: *Statement) void {
+    pub fn print(self: Statement) void {
         switch (self) {
             inline else => |case| case.print(),
         }
@@ -91,7 +117,7 @@ const Program = struct {
     }
 
     pub fn print(self: *Self) void {
-        for (self.statements.items) |statement| {
+        for (self.statements.items) |*statement| {
             statement.print();
         }
     }
@@ -212,17 +238,28 @@ const Parser = struct {
             } };
         }
 
-        std.debug.assert(self.peek_token == .semicolon or self.peek_token == .eof);
         if (self.peek_token == .semicolon or self.peek_token == .eof) {
             self.next_token();
+        } else {
+            std.log.warn("Parsed expression statement but didn't reach the end: {s}", .{@tagName(self.peek_token)});
         }
 
         return null;
     }
 
-    fn parse_expression(self: *Self, _: Precedence) ?Expression {
-        if (self.parse_prefix()) |e| {
-            return e;
+    fn parse_expression(self: *Self, precedence: Precedence) ?Expression {
+        if (self.parse_prefix()) |lhs| {
+            var current_exp = lhs;
+
+            while (self.peek_token != .semicolon and @intFromEnum(precedence) < @intFromEnum(token_precedence(self.peek_token))) {
+                self.next_token();
+                if (self.parse_infix(current_exp)) |e| {
+                    current_exp = e;
+                } else {
+                    return lhs;
+                }
+            }
+            return current_exp;
         } else {
             return null;
         }
@@ -237,8 +274,8 @@ const Parser = struct {
             } },
             .bang => {
                 self.next_token();
+                var rhs = self.parse_expression(.prefix).?;
 
-                var rhs = self.parse_expression(.lowest).?;
                 const rhs_heap = self.allocator.create(Expression) catch {
                     return null;
                 };
@@ -247,15 +284,15 @@ const Parser = struct {
                     return null;
                 };
 
-                return .{ .operator = .{
+                return .{ .prefix = .{
                     .token = .bang,
                     .rhs = &rhs,
                 } };
             },
             .minus => {
                 self.next_token();
+                var rhs = self.parse_expression(.prefix).?;
 
-                var rhs = self.parse_expression(.lowest).?;
                 const rhs_heap = self.allocator.create(Expression) catch {
                     return null;
                 };
@@ -264,7 +301,7 @@ const Parser = struct {
                     return null;
                 };
 
-                return .{ .operator = .{
+                return .{ .prefix = .{
                     .token = .minus,
                     .rhs = rhs_heap,
                 } };
@@ -273,11 +310,46 @@ const Parser = struct {
         };
     }
 
-    fn parse_infix(self: *Self, rhs: Expression) void {
-        _ = self;
-        _ = rhs;
+    fn parse_infix(self: *Self, lhs: Expression) ?Expression {
+        const lhs_heap = self.allocator.create(Expression) catch return null;
+        self.exprs.append(lhs_heap) catch return null;
+        lhs_heap.* = lhs;
+
+        if (self.curr_token != .plus) {
+            return lhs_heap.*;
+        }
+
+        var infix_exp: Expression = .{
+            .infix = .{
+                .op = self.curr_token,
+                .lhs = null,
+                .rhs = null,
+            },
+        };
+
+        var precedence = token_precedence(self.curr_token);
+        self.next_token();
+        var rhs = self.parse_expression(precedence).?;
+        const rhs_heap = self.allocator.create(Expression) catch return null;
+        self.exprs.append(rhs_heap) catch return null;
+        rhs_heap.* = rhs;
+
+        infix_exp.infix.lhs = lhs_heap;
+        infix_exp.infix.rhs = rhs_heap;
+        return infix_exp;
     }
 };
+
+test "parse an infix expression" {
+    const src = "50 + 5;";
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+
+    program.print();
+}
 
 test "parse a let statement" {
     var src =
@@ -358,7 +430,7 @@ test "parse a prefix not operator" {
     var program = try parser.parse_program();
     defer program.deinit();
     try std.testing.expectEqual(
-        program.statements.items[0].exp.value.operator.token,
+        program.statements.items[0].exp.value.prefix.token,
         .bang,
     );
     try std.testing.expectEqual(parser.errors.items.len, 0);
@@ -371,12 +443,12 @@ test "parse a prefix negate operator" {
     var program = try parser.parse_program();
     defer program.deinit();
     try std.testing.expectEqual(
-        program.statements.items[0].exp.value.operator.token,
+        program.statements.items[0].exp.value.prefix.token,
         .minus,
     );
     try std.testing.expectEqualStrings(
         "55",
-        program.statements.items[0].exp.value.operator.rhs.?.integer.string,
+        program.statements.items[0].exp.value.prefix.rhs.?.integer.string,
     );
     try std.testing.expectEqual(parser.errors.items.len, 0);
 }
