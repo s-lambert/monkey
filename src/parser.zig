@@ -275,48 +275,33 @@ const Parser = struct {
             .bang => {
                 self.next_token();
                 var rhs = self.parse_expression(.prefix).?;
-
-                const rhs_heap = self.allocator.create(Expression) catch {
-                    return null;
-                };
-                rhs_heap.* = rhs;
-                self.exprs.append(rhs_heap) catch {
-                    return null;
-                };
-
                 return .{ .prefix = .{
                     .token = .bang,
-                    .rhs = &rhs,
+                    .rhs = self.wrap_expr(rhs) catch return null,
                 } };
             },
             .minus => {
                 self.next_token();
                 var rhs = self.parse_expression(.prefix).?;
-
-                const rhs_heap = self.allocator.create(Expression) catch {
-                    return null;
-                };
-                rhs_heap.* = rhs;
-                self.exprs.append(rhs_heap) catch {
-                    return null;
-                };
-
                 return .{ .prefix = .{
                     .token = .minus,
-                    .rhs = rhs_heap,
+                    .rhs = self.wrap_expr(rhs) catch return null,
                 } };
             },
             else => null,
         };
     }
 
-    fn parse_infix(self: *Self, lhs: Expression) ?Expression {
-        const lhs_heap = self.allocator.create(Expression) catch return null;
-        self.exprs.append(lhs_heap) catch return null;
-        lhs_heap.* = lhs;
+    fn wrap_expr(self: *Self, expr: Expression) !*Expression {
+        const allocated = try self.allocator.create(Expression);
+        allocated.* = expr;
+        try self.exprs.append(allocated);
+        return allocated;
+    }
 
+    fn parse_infix(self: *Self, lhs: Expression) ?Expression {
         if (self.curr_token != .plus) {
-            return lhs_heap.*;
+            return (self.wrap_expr(lhs) catch return null).*;
         }
 
         var infix_exp: Expression = .{
@@ -330,12 +315,9 @@ const Parser = struct {
         var precedence = token_precedence(self.curr_token);
         self.next_token();
         var rhs = self.parse_expression(precedence).?;
-        const rhs_heap = self.allocator.create(Expression) catch return null;
-        self.exprs.append(rhs_heap) catch return null;
-        rhs_heap.* = rhs;
 
-        infix_exp.infix.lhs = lhs_heap;
-        infix_exp.infix.rhs = rhs_heap;
+        infix_exp.infix.lhs = self.wrap_expr(lhs) catch return null;
+        infix_exp.infix.rhs = self.wrap_expr(rhs) catch return null;
         return infix_exp;
     }
 };
