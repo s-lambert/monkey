@@ -38,18 +38,43 @@ const Expression = union(enum) {
     integer: struct {
         value: u8,
         string: []const u8,
+
+        const Self = @This();
+
+        pub fn print(self: *const Self) void {
+            std.log.warn("integer {s}", .{self.string});
+        }
     },
     identifier: []const u8,
     prefix: struct {
         // - (.minus) or ! (.bang)
         token: lexer.Token,
         rhs: ?*Expression,
+
+        const Self = @This();
+
+        pub fn print(self: *const Self) void {
+            std.log.warn("prefix {s}", .{@tagName(self.token)});
+        }
     },
     infix: struct {
         op: lexer.Token,
         lhs: ?*Expression,
         rhs: ?*Expression,
+
+        const Self = @This();
+
+        pub fn print(self: *const Self) void {
+            std.log.warn("infix {s}", .{@tagName(self.op)});
+        }
     },
+
+    pub fn print(self: Expression) void {
+        switch (self) {
+            .identifier => {},
+            inline else => |case| case.print(),
+        }
+    }
 };
 
 const Identifier = struct {
@@ -85,6 +110,7 @@ const Statement = union(enum) {
 
         pub fn print(self: *const Self) void {
             std.log.warn("expression {s}", .{@tagName(self.value)});
+            self.value.print();
         }
     },
 
@@ -329,6 +355,15 @@ test "parse an infix expression" {
     var program = try parser.parse_program();
     defer program.deinit();
     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+}
+
+test "parse an infix operator with identifiers" {
+    const src = "a + b / c";
+    var parser = Parser.init(std.testing.allocator, src);
+    defer parser.deinit();
+    var program = try parser.parse_program();
+    defer program.deinit();
+    try std.testing.expectEqual(@as(usize, 2), program.statements.items.len);
 
     program.print();
 }
