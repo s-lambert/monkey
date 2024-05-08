@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const lexer = @import("./lexer.zig");
+const Token = lexer.Token;
 
 const Precedence = enum(u8) {
     lowest = 0,
@@ -13,25 +14,19 @@ const Precedence = enum(u8) {
     call = 6,
 };
 
-fn token_precedence(t: lexer.Token) Precedence {
+fn token_precedence(t: Token) Precedence {
     return switch (t) {
-        lexer.Token.equal => .equals,
-        lexer.Token.not_equal => .equals,
-        lexer.Token.gt => .lessgreater,
-        lexer.Token.gte => .lessgreater,
-        lexer.Token.lt => .lessgreater,
-        lexer.Token.lte => .lessgreater,
-        lexer.Token.plus => .sum,
-        lexer.Token.minus => .sum,
-        lexer.Token.multiply => .product,
-        lexer.Token.divide => .product,
-        lexer.Token.bang => .prefix,
+        Token.equal, Token.not_equal => .equals,
+        Token.gt, Token.gte, Token.lt, Token.lte => .lessgreater,
+        Token.plus, Token.minus => .sum,
+        Token.multiply, Token.divide => .product,
+        Token.bang => .prefix,
         else => .lowest,
     };
 }
 
 test "precedence calculation" {
-    try std.testing.expectEqual(token_precedence(lexer.Token.equal), Precedence.equals);
+    try std.testing.expectEqual(token_precedence(Token.equal), Precedence.equals);
 }
 
 const Expression = union(enum) {
@@ -48,43 +43,56 @@ const Expression = union(enum) {
     identifier: []const u8,
     prefix: struct {
         // - (.minus) or ! (.bang)
-        token: lexer.Token,
+        token: Token,
         rhs: ?*Expression,
 
         const Self = @This();
 
         pub fn print(self: *const Self) void {
             std.log.warn("prefix {s}", .{@tagName(self.token)});
+            if (self.rhs) |e| {
+                e.print();
+            }
         }
     },
     infix: struct {
-        op: lexer.Token,
+        op: Token,
         lhs: ?*Expression,
         rhs: ?*Expression,
 
         const Self = @This();
 
         pub fn print(self: *const Self) void {
+            std.log.warn("(", .{});
+            if (self.lhs) |e| {
+                e.print();
+            }
             std.log.warn("infix {s}", .{@tagName(self.op)});
+            if (self.rhs) |e| {
+                e.print();
+            }
+            std.log.warn(")", .{});
         }
     },
 
     pub fn print(self: Expression) void {
         switch (self) {
-            .identifier => {},
+            .identifier => |ident| {
+                std.log.warn("identifier {s}", .{ident});
+            },
             inline else => |case| case.print(),
         }
     }
 };
 
 const Identifier = struct {
-    token: lexer.Token,
+    token: Token,
     value: []const u8,
 };
 
 const Statement = union(enum) {
     let: struct {
-        token: lexer.Token,
+        token: Token,
         identifier: Identifier,
         value: Expression,
 
@@ -152,8 +160,8 @@ const Program = struct {
 const Parser = struct {
     allocator: std.mem.Allocator,
     lex: lexer.Lexer,
-    curr_token: lexer.Token,
-    peek_token: lexer.Token,
+    curr_token: Token,
+    peek_token: Token,
     errors: ParseErrors,
     exprs: Expressions,
 
@@ -326,25 +334,36 @@ const Parser = struct {
     }
 
     fn parse_infix(self: *Self, lhs: Expression) ?Expression {
-        if (self.curr_token != .plus) {
-            return (self.wrap_expr(lhs) catch return null).*;
-        }
+        switch (self.curr_token) {
+            .plus,
+            .minus,
+            .multiply,
+            .divide,
+            .equal,
+            .not_equal,
+            .gt,
+            .gte,
+            .lt,
+            .lte,
+            => {
+                var infix_exp: Expression = .{
+                    .infix = .{
+                        .op = self.curr_token,
+                        .lhs = null,
+                        .rhs = null,
+                    },
+                };
 
-        var infix_exp: Expression = .{
-            .infix = .{
-                .op = self.curr_token,
-                .lhs = null,
-                .rhs = null,
+                var precedence = token_precedence(self.curr_token);
+                self.next_token();
+                var rhs = self.parse_expression(precedence).?;
+
+                infix_exp.infix.lhs = self.wrap_expr(lhs) catch return null;
+                infix_exp.infix.rhs = self.wrap_expr(rhs) catch return null;
+                return infix_exp;
             },
-        };
-
-        var precedence = token_precedence(self.curr_token);
-        self.next_token();
-        var rhs = self.parse_expression(precedence).?;
-
-        infix_exp.infix.lhs = self.wrap_expr(lhs) catch return null;
-        infix_exp.infix.rhs = self.wrap_expr(rhs) catch return null;
-        return infix_exp;
+            else => return (self.wrap_expr(lhs) catch return null).*,
+        }
     }
 };
 
@@ -358,13 +377,12 @@ test "parse an infix expression" {
 }
 
 test "parse an infix operator with identifiers" {
-    const src = "a + b / c";
+    const src = "3 + 4 * 5 == 3 * 1 + 4 * 5";
     var parser = Parser.init(std.testing.allocator, src);
     defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 2), program.statements.items.len);
-
+    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
     program.print();
 }
 
