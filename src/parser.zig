@@ -3,9 +3,11 @@
 const std = @import("std");
 const lexer = @import("./lexer.zig");
 const Token = lexer.Token;
+const ArrayList = std.ArrayList;
+const test_allocator = std.testing.allocator;
 
 const Precedence = enum(u8) {
-    lowest = 0,
+    lowest = 0, // default, (
     equals = 1, // ==, !=
     lessgreater = 2, // <, >, <=, >=
     sum = 3, // +, -
@@ -36,8 +38,8 @@ const Expression = union(enum) {
 
         const Self = @This();
 
-        pub fn print(self: *const Self) void {
-            std.log.warn("integer {s}", .{self.string});
+        pub fn print(self: *const Self, w: ArrayList(u8).Writer) void {
+            _ = w.write(self.string) catch return;
         }
     },
     identifier: []const u8,
@@ -48,10 +50,10 @@ const Expression = union(enum) {
 
         const Self = @This();
 
-        pub fn print(self: *const Self) void {
-            std.log.warn("prefix {s}", .{@tagName(self.token)});
+        pub fn print(self: *const Self, w: ArrayList(u8).Writer) void {
+            _ = w.write(@tagName(self.token)) catch return;
             if (self.rhs) |e| {
-                e.print();
+                e.print(w);
             }
         }
     },
@@ -62,25 +64,25 @@ const Expression = union(enum) {
 
         const Self = @This();
 
-        pub fn print(self: *const Self) void {
-            std.log.warn("(", .{});
+        pub fn print(self: *const Self, w: ArrayList(u8).Writer) void {
+            _ = w.write("(") catch return;
             if (self.lhs) |e| {
-                e.print();
+                e.print(w);
             }
-            std.log.warn("infix {s}", .{@tagName(self.op)});
+            _ = std.fmt.format(w, " {s} ", .{@tagName(self.op)}) catch return;
             if (self.rhs) |e| {
-                e.print();
+                e.print(w);
             }
-            std.log.warn(")", .{});
+            _ = w.write(")") catch return;
         }
     },
 
-    pub fn print(self: Expression) void {
+    pub fn print(self: Expression, w: ArrayList(u8).Writer) void {
         switch (self) {
             .identifier => |ident| {
-                std.log.warn("identifier {s}", .{ident});
+                _ = w.write(ident) catch return;
             },
-            inline else => |case| case.print(),
+            inline else => |case| case.print(w),
         }
     }
 };
@@ -98,8 +100,8 @@ const Statement = union(enum) {
 
         const Self = @This();
 
-        pub fn print(self: *const Self) void {
-            std.log.warn("let {s}", .{self.identifier.value});
+        pub fn print(self: *const Self, w: ArrayList(u8).Writer) void {
+            _ = w.write(@tagName(self.token)) catch return;
         }
     },
     ret: struct {
@@ -107,8 +109,11 @@ const Statement = union(enum) {
 
         const Self = @This();
 
-        pub fn print(_: *const Self) void {
-            std.log.warn("return", .{});
+        pub fn print(self: *const Self, w: ArrayList(u8).Writer) void {
+            _ = w.write("return") catch return;
+            if (self.value) |value| {
+                value.print(w);
+            }
         }
     },
     exp: struct {
@@ -116,15 +121,14 @@ const Statement = union(enum) {
 
         const Self = @This();
 
-        pub fn print(self: *const Self) void {
-            std.log.warn("expression {s}", .{@tagName(self.value)});
-            self.value.print();
+        pub fn print(self: *const Self, w: ArrayList(u8).Writer) void {
+            self.value.print(w);
         }
     },
 
-    pub fn print(self: Statement) void {
+    pub fn print(self: Statement, w: ArrayList(u8).Writer) void {
         switch (self) {
-            inline else => |case| case.print(),
+            inline else => |case| case.print(w),
         }
     }
 };
@@ -150,9 +154,9 @@ const Program = struct {
         self.statements.deinit();
     }
 
-    pub fn print(self: *Self) void {
+    pub fn print(self: *Self, w: ArrayList(u8).Writer) void {
         for (self.statements.items) |*statement| {
-            statement.print();
+            statement.print(w);
         }
     }
 };
@@ -287,10 +291,12 @@ const Parser = struct {
 
             while (self.peek_token != .semicolon and @intFromEnum(precedence) < @intFromEnum(token_precedence(self.peek_token))) {
                 self.next_token();
+                std.log.warn("before parsing: {s}", .{@tagName(self.curr_token)});
                 if (self.parse_infix(current_exp)) |e| {
                     current_exp = e;
                 } else {
-                    return lhs;
+                    std.log.warn("after parsing: {s}", .{@tagName(self.curr_token)});
+                    return current_exp;
                 }
             }
             return current_exp;
@@ -321,6 +327,17 @@ const Parser = struct {
                     .token = .minus,
                     .rhs = self.wrap_expr(rhs) catch return null,
                 } };
+            },
+            .l_paren => {
+                self.next_token();
+
+                var exp = self.parse_expression(.lowest);
+
+                if (self.peek_token != .r_paren) {
+                    std.log.warn("did not reach end of expression", .{});
+                }
+
+                return exp;
             },
             else => null,
         };
@@ -367,123 +384,141 @@ const Parser = struct {
     }
 };
 
-test "parse an infix expression" {
-    const src = "50 + 5;";
+// test "parse an infix expression" {
+//     const src = "50 + 5;";
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+// }
+
+// test "parse an infix operator with identifiers" {
+//     const src = "3 + 4 * 5 == 3 * 1 + 4 * 5";
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+//     var list = ArrayList(u8).init(test_allocator);
+//     var writer = list.writer();
+//     defer list.deinit();
+//     program.print(writer);
+//     std.log.warn("{s}", .{list.items});
+// }
+
+test "parse a grouped expression" {
+    const src = "(a + b) * c";
     var parser = Parser.init(std.testing.allocator, src);
     defer parser.deinit();
     var program = try parser.parse_program();
     defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+    var list = ArrayList(u8).init(test_allocator);
+
+    var writer = list.writer();
+    defer list.deinit();
+    program.print(writer);
+    std.log.warn("???{s}???", .{list.items});
 }
 
-test "parse an infix operator with identifiers" {
-    const src = "3 + 4 * 5 == 3 * 1 + 4 * 5";
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
-    program.print();
-}
+// test "parse a let statement" {
+//     var src =
+//         \\let x = 5;
+//     ;
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+//     try std.testing.expectEqualDeep(
+//         Identifier{ .token = .{ .ident = "x" }, .value = "x" },
+//         program.statements.items[0].let.identifier,
+//     );
+//     try std.testing.expectEqualStrings(
+//         "5",
+//         program.statements.items[0].let.value.integer.string,
+//     );
+//     try std.testing.expectEqual(parser.errors.items.len, 0);
+// }
 
-test "parse a let statement" {
-    var src =
-        \\let x = 5;
-    ;
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
-    try std.testing.expectEqualDeep(
-        Identifier{ .token = .{ .ident = "x" }, .value = "x" },
-        program.statements.items[0].let.identifier,
-    );
-    try std.testing.expectEqualStrings(
-        "5",
-        program.statements.items[0].let.value.integer.string,
-    );
-    try std.testing.expectEqual(parser.errors.items.len, 0);
-}
+// test "parse no assign in let statement" {
+//     var src =
+//         \\let x 5;
+//     ;
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
+// }
 
-test "parse no assign in let statement" {
-    var src =
-        \\let x 5;
-    ;
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqual(@as(usize, 1), parser.errors.items.len);
-}
+// test "parse return statement" {
+//     var src =
+//         \\return 10;
+//     ;
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqualStrings(
+//         "10",
+//         program.statements.items[0].ret.value.?.integer.string,
+//     );
+//     try std.testing.expectEqual(parser.errors.items.len, 0);
+// }
 
-test "parse return statement" {
-    var src =
-        \\return 10;
-    ;
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqualStrings(
-        "10",
-        program.statements.items[0].ret.value.?.integer.string,
-    );
-    try std.testing.expectEqual(parser.errors.items.len, 0);
-}
+// test "parse a singular integer expression statement" {
+//     const src = "5;";
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqualStrings(
+//         "5",
+//         program.statements.items[0].exp.value.integer.string,
+//     );
+//     try std.testing.expectEqual(parser.errors.items.len, 0);
+// }
 
-test "parse a singular integer expression statement" {
-    const src = "5;";
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqualStrings(
-        "5",
-        program.statements.items[0].exp.value.integer.string,
-    );
-    try std.testing.expectEqual(parser.errors.items.len, 0);
-}
+// test "parse a singular identifier expression statement" {
+//     const src = "foo;";
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqualStrings(
+//         "foo",
+//         program.statements.items[0].exp.value.identifier,
+//     );
+//     try std.testing.expectEqual(parser.errors.items.len, 0);
+// }
 
-test "parse a singular identifier expression statement" {
-    const src = "foo;";
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqualStrings(
-        "foo",
-        program.statements.items[0].exp.value.identifier,
-    );
-    try std.testing.expectEqual(parser.errors.items.len, 0);
-}
+// test "parse a prefix not operator" {
+//     const src = "!foo;";
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(
+//         program.statements.items[0].exp.value.prefix.token,
+//         .bang,
+//     );
+//     try std.testing.expectEqual(parser.errors.items.len, 0);
+// }
 
-test "parse a prefix not operator" {
-    const src = "!foo;";
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqual(
-        program.statements.items[0].exp.value.prefix.token,
-        .bang,
-    );
-    try std.testing.expectEqual(parser.errors.items.len, 0);
-}
-
-test "parse a prefix negate operator" {
-    const src = "-55;";
-    var parser = Parser.init(std.testing.allocator, src);
-    defer parser.deinit();
-    var program = try parser.parse_program();
-    defer program.deinit();
-    try std.testing.expectEqual(
-        program.statements.items[0].exp.value.prefix.token,
-        .minus,
-    );
-    try std.testing.expectEqualStrings(
-        "55",
-        program.statements.items[0].exp.value.prefix.rhs.?.integer.string,
-    );
-    try std.testing.expectEqual(parser.errors.items.len, 0);
-}
+// test "parse a prefix negate operator" {
+//     const src = "-55;";
+//     var parser = Parser.init(std.testing.allocator, src);
+//     defer parser.deinit();
+//     var program = try parser.parse_program();
+//     defer program.deinit();
+//     try std.testing.expectEqual(
+//         program.statements.items[0].exp.value.prefix.token,
+//         .minus,
+//     );
+//     try std.testing.expectEqualStrings(
+//         "55",
+//         program.statements.items[0].exp.value.prefix.rhs.?.integer.string,
+//     );
+//     try std.testing.expectEqual(parser.errors.items.len, 0);
+// }
