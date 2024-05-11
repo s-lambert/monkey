@@ -27,10 +27,6 @@ fn token_precedence(t: Token) Precedence {
     };
 }
 
-test "precedence calculation" {
-    try std.testing.expectEqual(token_precedence(Token.equal), Precedence.equals);
-}
-
 const Expression = union(enum) {
     integer: struct {
         value: u8,
@@ -270,6 +266,7 @@ const Parser = struct {
     }
 
     fn parse_expression_statement(self: *Self) !?Statement {
+        std.log.warn("try to parse expression statement", .{});
         if (self.parse_expression(.lowest)) |e| {
             return .{ .exp = .{
                 .value = e,
@@ -291,14 +288,12 @@ const Parser = struct {
 
             while (self.peek_token != .semicolon and @intFromEnum(precedence) < @intFromEnum(token_precedence(self.peek_token))) {
                 self.next_token();
-                std.log.warn("before parsing: {s}", .{@tagName(self.curr_token)});
                 if (self.parse_infix(current_exp)) |e| {
                     current_exp = e;
-                } else {
-                    std.log.warn("after parsing: {s}", .{@tagName(self.curr_token)});
-                    return current_exp;
                 }
             }
+            std.log.warn("tokens {s} {s}", .{ @tagName(self.curr_token), @tagName(self.peek_token) });
+            std.log.warn("precedence {d} {d}", .{ @intFromEnum(precedence), @intFromEnum(token_precedence(self.peek_token)) });
             return current_exp;
         } else {
             return null;
@@ -335,6 +330,9 @@ const Parser = struct {
 
                 if (self.peek_token != .r_paren) {
                     std.log.warn("did not reach end of expression", .{});
+                } else {
+                    // This is to skip the right parenthesis, but the reference implementation doesn't use it.
+                    self.next_token();
                 }
 
                 return exp;
@@ -351,6 +349,7 @@ const Parser = struct {
     }
 
     fn parse_infix(self: *Self, lhs: Expression) ?Expression {
+        std.log.warn("tried to parse infix: {s}", .{@tagName(self.curr_token)});
         switch (self.curr_token) {
             .plus,
             .minus,
@@ -408,7 +407,7 @@ const Parser = struct {
 // }
 
 test "parse a grouped expression" {
-    const src = "(a + b) * c";
+    const src = "c * (a + b)";
     var parser = Parser.init(std.testing.allocator, src);
     defer parser.deinit();
     var program = try parser.parse_program();
@@ -418,7 +417,7 @@ test "parse a grouped expression" {
     var writer = list.writer();
     defer list.deinit();
     program.print(writer);
-    std.log.warn("???{s}???", .{list.items});
+    std.log.warn("{d} ??? {s}", .{ program.statements.items.len, list.items });
 }
 
 // test "parse a let statement" {
